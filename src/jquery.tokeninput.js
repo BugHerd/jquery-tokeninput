@@ -1009,7 +1009,7 @@ $.TokenList = function (input, url_or_data, settings) {
 
                 if ($(input).data("settings").createNew) {
                   if (results.length === 0 || results[0][searchField].toLowerCase() != query.toLowerCase()) {
-                    results.splice(0, 0, {"id": 0, "name": query);
+                    results.splice(0, 0, {"id": 0, "name": query});
                   }
                 }
                 

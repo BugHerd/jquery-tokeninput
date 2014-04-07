@@ -69,7 +69,12 @@ var DEFAULT_SETTINGS = {
     idPrefix: "token-input-",
 
     // Keep track if the input is currently in disabled mode
-    disabled: false
+    disabled: false,
+
+    // BugHerd specific settings for the tag selector
+    alphaSort: false,
+    createNew: false,
+    createNewSuffix: "",
 };
 
 // Default classes to use when theming
@@ -991,16 +996,22 @@ $.TokenList = function (input, url_or_data, settings) {
                 $.ajax(ajax_params);
             } else if($(input).data("settings").local_data) {
                 // Do the search through local data
+                var searchField = $(input).data("settings").propertyToSearch;
+
                 var results = $.grep($(input).data("settings").local_data, function (row) {
-                    return row[$(input).data("settings").propertyToSearch].toLowerCase().indexOf(query.toLowerCase()) > -1;
+                    return row[searchField].toLowerCase().indexOf(query.toLowerCase()) > -1;
                 });
 
-                results.sort(function(a, b) {
-                  return a["name"] > b["name"];
-                });
+                if ($(input).data("settings").alphaSort) {
+                  results.sort(function(a, b) {
+                    return a[searchField].toLowerCase() > b[searchField].toLowerCase();
+                  });
+                }
 
-                if (results.count === 0 || results[0]["name"].toLowerCase() != query.toLowerCase()) {
-                  results.splice(0, 0, {"id": 0, "name": query});
+                if ($(input).data("settings").createNew) {
+                  if (results.length === 0 || results[0][searchField].toLowerCase() != query.toLowerCase()) {
+                    results.splice(0, 0, {"id": 0, "name": query + $(input).data("settings").createNewSuffix});
+                  }
                 }
                 
                 cache.add(cache_key, results);

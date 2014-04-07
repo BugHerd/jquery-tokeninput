@@ -995,6 +995,14 @@ $.TokenList = function (input, url_or_data, settings) {
                     return row[$(input).data("settings").propertyToSearch].toLowerCase().indexOf(query.toLowerCase()) > -1;
                 });
 
+                results.sort(function(a, b) {
+                  return a["name"] > b["name"];
+                });
+
+                if (results.count === 0 || results[0]["name"].toLowerCase() != query.toLowerCase()) {
+                  results.splice(0, 0, {"id": 0, "name": query});
+                }
+                
                 cache.add(cache_key, results);
                 if($.isFunction($(input).data("settings").onResult)) {
                     results = $(input).data("settings").onResult.call(hidden_input, results);

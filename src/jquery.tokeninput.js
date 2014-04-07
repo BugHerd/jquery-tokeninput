@@ -1,799 +1,1066 @@
+/*
+ * jQuery Plugin: Tokenizing Autocomplete Text Entry
+ * Version 1.6.1
+ *
+ * Copyright (c) 2009 James Smith (http://loopj.com)
+ * Licensed jointly under the GPL and MIT licenses,
+ * choose which one suits your project best!
+ *
+ */
 
+(function ($) {
+// Default settings
+var DEFAULT_SETTINGS = {
+    // Search settings
+    method: "GET",
+    queryParam: "q",
+    searchDelay: 300,
+    minChars: 1,
+    propertyToSearch: "name",
+    jsonContainer: null,
+    contentType: "json",
 
-// Task Create View
-ns("BugHerd.Shared.Views.Task.Create", Backbone.View.extend({
-  template: "#taskcreate-template",
-  tagName: "div",
-  className: "taskCreate",
-  dragging: null,
-  memberList: null,
-  tagsList: null,
+    // Prepopulation settings
+    prePopulate: null,
+    processPrePopulate: false,
 
-  events: {
-    "click .button-feedback": "submit",
-    "click .button-task": "submit",
-    "click .button-admin": "submit",
-    "click .submitTask": "start",
-    "click .entry-close": "finish",
-    "click .stopTasks": "finish",
-    "click .button-close": "finish",
-    "click .extension-message": "openUrl"
-  },
+    // Display settings
+    hintText: "Type in a search term",
+    noResultsText: "No results",
+    searchingText: "Searching...",
+    deleteText: "&times;",
+    animateDropdown: true,
+    placeholder: null,
+    theme: null,
+    zindex: 999,
+    resultsLimit: null,
 
-  initialize: function (options) {
-    // Defaults
-    this.options = _.extend({},this.options||{},options);
+    enableHTML: false,
 
-    // Template
-    this.template = _.template($(this.template).html());
+    resultsFormatter: function(item) {
+      var string = item[this.propertyToSearch];
+      return "<li>" + (this.enableHTML ? string : _escapeHTML(string)) + "</li>";
+    },
 
-    // Bindings
-    _.bindAll(this, "render", "start",  "submit", "hotkey", "finish", "openUrl");
-  },
+    tokenFormatter: function(item) {
+      var string = item[this.propertyToSearch];
+      return "<li><p>" + (this.enableHTML ? string : _escapeHTML(string)) + "</p></li>";
+    },
 
-  getActivePane: function() {
-    return this.$('.createBlock.active,.confirmBlock.active');
-  },
+    // Tokenization settings
+    tokenLimit: null,
+    tokenDelimiter: ",",
+    preventDuplicates: false,
+    tokenValue: "id",
 
-  hotkey: function(event) {
-    // Prepare
-    var $pane, $selected;
+    // Behavioral settings
+    allowFreeTagging: false,
+    allowTabOut: false,
 
-    // Handle
-    switch ( true ) {
+    // Callbacks
+    onResult: null,
+    onCachedResult: null,
+    onAdd: null,
+    onFreeTaggingAdd: null,
+    onDelete: null,
+    onReady: null,
 
-      case BugHerd.Util.browserSubmitShortcutKey(event) /* cmd+enter */:
-      this.submit();
-      event.preventDefault();
-      break;
+    // Other settings
+    idPrefix: "token-input-",
 
-      case event.which === 27 /* escape */:
-      this.finish(event);
-      event.preventDefault();
-      break;
+    // Keep track if the input is currently in disabled mode
+    disabled: false
+};
 
-      case event.which === 13 /* enter */:
-      $pane = this.getActivePane();
-      if ( $pane.is('.confirmBlock') ) {
-        this.finish(event);
-      }
-      else {
-        $selected = $pane.find('.hover');
-        if ( $selected.length ) {
-          $selected.trigger('click');
-          event.preventDefault();
+// Default classes to use when theming
+var DEFAULT_CLASSES = {
+    tokenList: "token-input-list",
+    token: "token-input-token",
+    tokenReadOnly: "token-input-token-readonly",
+    tokenDelete: "token-input-delete-token",
+    selectedToken: "token-input-selected-token",
+    highlightedToken: "token-input-highlighted-token",
+    dropdown: "token-input-dropdown",
+    dropdownItem: "token-input-dropdown-item",
+    dropdownItem2: "token-input-dropdown-item2",
+    selectedDropdownItem: "token-input-selected-dropdown-item",
+    inputToken: "token-input-input-token",
+    focused: "token-input-focused",
+    disabled: "token-input-disabled"
+};
+
+// Input box position "enum"
+var POSITION = {
+    BEFORE: 0,
+    AFTER: 1,
+    END: 2
+};
+
+// Keys "enum"
+var KEY = {
+    BACKSPACE: 8,
+    TAB: 9,
+    ENTER: 13,
+    ESCAPE: 27,
+    SPACE: 32,
+    PAGE_UP: 33,
+    PAGE_DOWN: 34,
+    END: 35,
+    HOME: 36,
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    NUMPAD_ENTER: 108,
+    COMMA: 188
+};
+
+var HTML_ESCAPES = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#x27;',
+  '/': '&#x2F;'
+};
+
+var HTML_ESCAPE_CHARS = /[&<>"'\/]/g;
+
+function coerceToString(val) {
+  return String((val === null || val === undefined) ? '' : val);
+}
+
+function _escapeHTML(text) {
+  return coerceToString(text).replace(HTML_ESCAPE_CHARS, function(match) {
+    return HTML_ESCAPES[match];
+  });
+}
+
+// Additional public (exposed) methods
+var methods = {
+    init: function(url_or_data_or_function, options) {
+        var settings = $.extend({}, DEFAULT_SETTINGS, options || {});
+
+        return this.each(function () {
+            $(this).data("settings", settings);
+            $(this).data("tokenInputObject", new $.TokenList(this, url_or_data_or_function, settings));
+        });
+    },
+    clear: function() {
+        this.data("tokenInputObject").clear();
+        return this;
+    },
+    add: function(item) {
+        this.data("tokenInputObject").add(item);
+        return this;
+    },
+    remove: function(item) {
+        this.data("tokenInputObject").remove(item);
+        return this;
+    },
+    get: function() {
+        return this.data("tokenInputObject").getTokens();
+    },
+    toggleDisabled: function(disable) {
+        this.data("tokenInputObject").toggleDisabled(disable);
+        return this;
+    },
+    setOptions: function(options){
+        $(this).data("settings", $.extend({}, $(this).data("settings"), options || {}));
+        return this;
+    },
+    destroy: function () {
+        if(this.data("tokenInputObject")){
+            this.data("tokenInputObject").clear();
+            var tmpInput = this;
+            var closest = this.parent();
+            closest.empty();
+            tmpInput.show();
+            closest.append(tmpInput);
+            return tmpInput;
         }
-      }
-      break;
-
-      case event.which === 38 /* up */:
-      $pane = this.getActivePane();
-      $selected = $pane.find('li.hover');
-      if ( !$selected.length ) {
-        $selected = $pane.find('li.active');
-      }
-      if ( !$selected.length ) {
-        $selected = $pane.find('li:last').click();
-        if ( $selected.length ) {
-          event.preventDefault();
-        }
-      }
-      else if ( $selected.length ) {
-        if ( $selected.prev().length ) {
-          $selected.removeClass('hover').prev().click();
-        }
-        else {
-          $pane.find('li:last').click();
-        }
-        event.preventDefault();
-      }
-      break;
-
-      case event.which === 40 /* down */:
-      $pane = this.getActivePane();
-      $selected = $pane.find('li.hover');
-      if ( !$selected.length ) {
-        $selected = $pane.find('li.active');
-      }
-      if ( !$selected.length ) {
-        $selected = $pane.find('li:first').click();
-        if ( $selected.length ) {
-          event.preventDefault();
-        }
-      }
-      else if ( $selected.length ) {
-        if ( $selected.next().length ) {
-          $selected.removeClass('hover').next().click();
-        }
-        else {
-          $selected.removeClass('hover');
-          $pane.find('li:first').click();
-        }
-        event.preventDefault();
-      }
-      break;
     }
-  },
+};
 
-  createTask: function(data,options) {
-    var task = new BugHerd.Shared.Models.Task(data,options);
-    this.setTask(task);
-    return task;
-  },
-
-  setTask: function(task) {
-    this.options.task = task;
-    return this;
-  },
-
-  getTask: function() {
-    return this.options.task;
-  },
-
-  resetTask: function() {
-    var task = this.getTask();
-    if ( task ) {
-      if ( task.isNew() ) {
-        task.destroy();
-      }
-      this.setTask(null);
-    }
-    return this;
-  },
-
-  initializeInputs: function() {
-    var
-    descriptionValid = false,
-    validEmailRequired = ((bugherd.application.get('mode') == 'anonymous') && bugherd.getConfigOption('reporter','required')),
-    emailValid;
-
-    var
-    $assignee = this.$('#bh-assignee'),
-    $reporter = this.$('#bh-reporter'),
-    $tags = this.$('#bh-tags'),
-    $description = this.$('#bh-description'),
-    $actions = this.$('.entry-actions').children();
-    this.$("ul").remove();
-
-    this.memberList = new BugHerd.Shared.Collections.User(_.filter(bugherd.application.usersCollection.models, function (a){
-      return a.get("is_member") === true;
-    }));
-
-    var validEmail = function(email) {
-      if (validEmailRequired) {
-        return (/([\w\.%\+\-]+)@([\w\-]+\.)+([\w]{2,})/i).test(email);
-      } else {
-        return true;
-      }
-    };
-
-    if (validEmailRequired) {
-      // Feedback email required
-      emailValid = validEmail($reporter.val());
+// Expose the .tokenInput function to jQuery as a plugin
+$.fn.tokenInput = function (method) {
+    // Method calling and initialization logic
+    if(methods[method]) {
+        return methods[method].apply(this, Array.prototype.slice.call(arguments, 1));
     } else {
-      emailValid = true;
+        return methods.init.apply(this, arguments);
     }
+};
 
-    var showValidity = function() {
-      $actions
-      .toggleClass('disabled',!(descriptionValid && emailValid))
-      .prop('disabled',!(descriptionValid && emailValid));
-    };
-    if (validEmailRequired) {
-      $reporter.countText({
-        callback: function(isValid) {
-          emailValid = isValid && validEmail($reporter.val());
-          showValidity();
+// TokenList class for each input
+$.TokenList = function (input, url_or_data, settings) {
+    //
+    // Initialization
+    //
+
+    // Configure the data source
+    if($.type(url_or_data) === "string" || $.type(url_or_data) === "function") {
+        // Set the url to query against
+        $(input).data("settings").url = url_or_data;
+
+        // If the URL is a function, evaluate it here to do our initalization work
+        var url = computeURL();
+
+        // Make a smart guess about cross-domain if it wasn't explicitly specified
+        if($(input).data("settings").crossDomain === undefined && typeof url === "string") {
+            if(url.indexOf("://") === -1) {
+                $(input).data("settings").crossDomain = false;
+            } else {
+                $(input).data("settings").crossDomain = (location.href.split(/\/+/g)[1] !== url.split(/\/+/g)[1]);
+            }
         }
-      });
+    } else if(typeof(url_or_data) === "object") {
+        // Set the local data to search through
+        $(input).data("settings").local_data = url_or_data;
     }
-    $description.countText({
-      maxLength: 1000,
-      callback: function(isValid) {
-        descriptionValid = isValid;
-        showValidity();
-      }
-    });
 
-  },
-
-  render: function() {
-    // Prepare
-    var
-    me = this,
-    users = bugherd.application.usersCollection;
-
-    var bhReporter = localStorage.getItem('bh-reporter') || "";
-
-    // Bring the element to the top
-//    this.$el.topZIndex();
-
-    // Render the element
-    this.$el.html(this.template({
-      users: users.toJSON(),
-      bhReporter: bhReporter
-    }));
-
-    // Fetch
-    var
-    $assigneeListItems = this.$(".taskCreateAssignee"),
-    $assigneeSearch = this.$(".taskCreateAssigneeSearch");
-
-    // Render Search
-    $assigneeSearch.quicksearch($assigneeListItems,{
-      selector: '.assigneeName'
-    });
-
-    // Loading Spinner
-    var $loadingIcon = this.$(".confirm-loading .confirm-icon");
-    var opts = {
-      lines: 11, // The number of lines to draw
-      length: 4, // The length of each line
-      width: 3, // The line thickness
-      radius: 4, // The radius of the inner circle
-      rotate: 0, // The rotation offset
-      color: '#fff', // #rgb or #rrggbb
-      speed: 1, // Rounds per second
-      trail: 30, // Afterglow percentage
-      shadow: false, // Whether to render a shadow
-      hwaccel: false, // Whether to use hardware acceleration
-      className: 'spinner', // The CSS class to assign to the spinner
-      zIndex: 200, // The z-index (defaults to 2000000000)
-      top: 11, // Top position relative to parent in px
-      left: 11 // Left position relative to parent in px
-    };
-    var spinner = new Spinner(opts).spin($loadingIcon[0]);
-
-    this.initializeInputs();
-
-    this.$fader = this.$fader || $("<div class=\"bhAdminFader\" />").css({
-      top: "0",
-      left: "0",
-      width: "100%",
-      height: "100%",
-      position: "fixed",
-      background: "#1d313a",
-      opacity: ".7",
-      cursor: "crosshair",
-      zIndex: "199"
-    }).hide().appendTo('body');
-
-    // Chain
-    return this;
-  },
-  openUrl: function(details) {
-    bugherd.openUrl(bugherd.getExtensionLink());
-  },
-  receiveExtensionExistance: function(details){
-    // Prepare
-    var $message;
-    // TODO: this does not work ether.
-    $message = this.$('.extension-message');
-    // Do not show the message if our browser is not supported
-    if ( details === null )  {
-      $message.hide();
+    // Build class names
+    if($(input).data("settings").classes) {
+        // Use custom class names
+        $(input).data("settings").classes = $.extend({}, DEFAULT_CLASSES, $(input).data("settings").classes);
+    } else if($(input).data("settings").theme) {
+        // Use theme-suffixed default class names
+        $(input).data("settings").classes = {};
+        $.each(DEFAULT_CLASSES, function(key, value) {
+            $(input).data("settings").classes[key] = value + "-" + $(input).data("settings").theme;
+        });
     } else {
-      // A newer version of the extension exists
-      if ( !details || !details.response || details.response.version != 1 ) {
-        $message.show();
-      }
-      // We have the extension and it is up to date
-      else {
-        $message.hide();
-      }
-    }
-
-    // Chain
-    return this;
-  },
-
-
-  show: function() {
-    var self = this;
-
-    this.$fader.css('opacity', '.7').show();
-    // Position
-    this.$el.css({
-      position: 'absolute'
-    });
-
-    // Reset
-    this.dragging = null;
-
-    // Show
-    this.$el.show();
-
-    if( bugherd.application.get('location') !== 'admin') {
-      bugherd.requestExtensionExistance({},this.receiveExtensionExistance);
-    }
-
-    // TODO: this is a hack for now, need to fix this
-    $(".token-input-dropdown-bh").remove();
-
-    var $assignee = $("<input>").attr({id:"bh-assignee",type:"text"}).appendTo( this.$('.assigneeHolder').empty());
-    var assigneeInput = $assignee.tokenInput(this.memberList.toJSON(), {
-      theme             :   'bh',
-      tokenLimit        :   1,
-      animateDropdown   :   false,
-      allowFreeTagging  :   false,
-      allowTabOut       :   true,
-      noResultsText     :   "No developers found."
-    });
-
-
-    var $tags = $("<input>").attr({id: "bh-tags", type: "text"}).appendTo( self.$('.tagHolder').empty());
-
-    var tagsInput = $tags.tokenInput(bugherd.application.tasksCollection.updateTagsCollection().tagsCollection.toJSON(), {
-      theme             :   'bh',
-      preventDuplicates :   true,
-      animateDropdown   :   false,
-      allowFreeTagging  :   true,
-      allowTabOut       :   true,
-      noResultsText     :   "No results. Type comma to add.",
-      alphaSort         :   true,
-      createNew         :   true,
-      createNewSuffix   :   " (new tag)"
-    });
-
-    // Hotkeys
-    $(document).off('keydown',this.hotkey).on('keydown',this.hotkey);
-    $("label.inline").inFieldLabels();
-
-    // Chain
-    return this;
-  },
-
-  /**
-   * exit bug creation mode
-   * @param  {event} e click event on cancel button
-   */
-   hide: function() {
-    // Hide
-    this.$el.hide();
-    if(this.$fader){
-     this.$fader.hide();
-   }
-
-    // Reset
-    this.dragging = null;
-
-    // Hotkeys
-    $(document).off('keydown',this.hotkey);
-
-    // Chain
-    return this;
-  },
-
-  visible: function() {
-    return this.$el.is(':visible');
-  },
-
-  start: function($target) {
-
-    // Prepare
-    var
-    me = this,
-    $description = this.$("#bh-description"),
-    $reporterEmail = this.$("#bh-reporter"),
-    $reportToEmail = this.$("#bh-report-to"),
-    $priority = this.$("#bh-severity").val(0),
-    $assigned = this.$("#bh-assignee"),
-    $tags = this.$("#bh-tags"),
-    tasks = bugherd.application.tasksCollection;
-
-    this.$(".bh-entry").removeClass("entry-success").removeClass("entry-error");
-    this.$(".confirm-message").hide();
-    this.$(".entry-content, .entry-actions").show();
-
-    // Reset the old task
-    this.resetTask();
-
-    // Clear values
-    $description.val('').trigger('change');
-    if ($priority.length > 0) $priority.val(0);
-
-    // Create our task mode
-    var task;
-
-    if(bugherd.application.get('location') === 'admin'){
-      task = this.createTask({
-        url: null,
-        selector_info: null,
-        browser_info: null,
-        data: null
-      });
-    }
-    else
-    {
-      var selectorData = this.prepareTagInfo($target);
-
-      // Add our coordinates
-      var data = {};
-      var coordinates = this.generateCoordinates($target);
-      data.coordinates = coordinates;
-
-      // Add our user meta data
-      var userMetaData = bugherd.getConfigOption("metadata") || {};
-      data.userMetaData = userMetaData;
-
-      task = this.createTask({
-        url: bugherd.getParentPath(),
-        selector_info:selectorData,
-        site: bugherd.getParentHost(),
-        browser_info: BugHerd.Util.getBrowserSpecs(),
-        data: data
-      });
+        $(input).data("settings").classes = DEFAULT_CLASSES;
     }
 
 
-    // Chain
-    this.show();
-    $description.focus();
-    return this;
-  },
+    // Save the tokens
+    var saved_tokens = [];
 
-  prepareTagInfo: function (target) {
-    // Prepare
-    var $parentDocument = bugherd.parentPage.$document;
-    var t = 50;
-    var nodes = {};
+    // Keep track of the number of tokens in the list
+    var token_count = 0;
 
-    // If there is no target, don't do anything
-    if ( !target || target.get(0) === $parentDocument.get(0) ) {
-      // nothing
-    }
+    // Basic cache to save on db hits
+    var cache = new $.TokenList.Cache();
 
-    // If the target is something else, do some stuff
-    else {
-      //get simple selector
-      var path = this.getSelector(target);
-      target.removeClass("bugherd_highlight").filter('[class=""]').removeAttr('class');
-      var outerhtml = target.outerHTML().substring(0,500);
-      nodes.path = path;
-      nodes.html = outerhtml;
-      nodes.version = 2;
-      nodes.data = {
-        bugOffsetX: target.data("bugOffsetX")/target.width(),
-        bugOffsetY: target.data("bugOffsetY")/target.height()
-      };
-    }
+    // Keep track of the timeout, old vals
+    var timeout;
+    var input_val;
 
-    return nodes;
-  },
+    // Create a new text input an attach keyup events
+    var input_box = $("<input type=\"text\"  autocomplete=\"off\" autocapitalize=\"off\">")
+        .css({
+            outline: "none"
+        })
+        .attr("id", $(input).data("settings").idPrefix + input.id)
+        .focus(function () {
+            if ($(input).data("settings").disabled) {
+                return false;
+            } else
+            if ($(input).data("settings").tokenLimit === null || $(input).data("settings").tokenLimit !== token_count) {
+                show_dropdown_hint();
+            }
+            token_list.addClass($(input).data("settings").classes.focused);
+        })
+        .blur(function () {
+            hide_dropdown();
 
-  /**
-   * generate a CSS selector
-   * @param  {dom element} el       the element to get info about
-   * @param  {string} selector the selector we've made so fat
-   * @return {string}
-   */
-   getSelector: function($el, selector) {
-    selector = selector || "";
+            if ($(input).data("settings").allowFreeTagging) {
+              add_freetagging_tokens();
+              hidden_input.change();
+            }
 
-    if ( $el.is("html") ) {
-      return "html" + selector;
-    }
+            $(this).val("");
+            token_list.removeClass($(input).data("settings").classes.focused);
+        })
+        .bind("keyup keydown blur update", resize_input)
+        .keydown(function (event) {
+            var previous_token;
+            var next_token;
 
-    var id = $el.attr("id");
-    var className = ($el.attr("class")||'').replace(/([.#>])/g,'\\\\$1').split(/[\s\n]+/).join(".");
-    var tag = $el.get(0).nodeName.toLowerCase();
+            switch(event.keyCode) {
+                case KEY.LEFT:
+                case KEY.RIGHT:
+                case KEY.UP:
+                case KEY.DOWN:
+                    if(!$(this).val()) {
+                        previous_token = input_token.prev();
+                        next_token = input_token.next();
 
-    if ( id ) {
-      tag += "#" + id;
-    }
+                        if((previous_token.length && previous_token.get(0) === selected_token) || (next_token.length && next_token.get(0) === selected_token)) {
+                            // Check if there is a previous/next token and it is selected
+                            if(event.keyCode === KEY.LEFT || event.keyCode === KEY.UP) {
+                                deselect_token($(selected_token), POSITION.BEFORE);
+                            } else {
+                                deselect_token($(selected_token), POSITION.AFTER);
+                            }
+                        } else if((event.keyCode === KEY.LEFT || event.keyCode === KEY.UP) && previous_token.length) {
+                            // We are moving left, select the previous token if it exists
+                            select_token($(previous_token.get(0)));
+                        } else if((event.keyCode === KEY.RIGHT || event.keyCode === KEY.DOWN) && next_token.length) {
+                            // We are moving right, select the next token if it exists
+                            select_token($(next_token.get(0)));
+                        }
+                    } else {
+                        var dropdown_item = null;
 
-    if ( className ) {
-      tag += "." + className;
-    }
+                        if(event.keyCode === KEY.DOWN || event.keyCode === KEY.RIGHT) {
+                            dropdown_item = $(selected_dropdown_item).next();
+                        } else {
+                            dropdown_item = $(selected_dropdown_item).prev();
+                        }
 
-    tag = tag.replace(".bugherd_highlight","");
+                        if(dropdown_item.length) {
+                            select_dropdown_item(dropdown_item);
+                        }
+                    }
+                    return false;
+                    break;
 
-    return this.getSelector($el.parent(), ">" + tag + selector);
-  },
+                case KEY.BACKSPACE:
+                    previous_token = input_token.prev();
 
-  generateCoordinates: function($target) {
-    // Prepare
-    var
-    parentPageOffset = bugherd.config.parentPageOffset,
-    $parentWindow = bugherd.parentPage.$window,
-    $parentDocument = bugherd.parentPage.$document,
-    $parentBody = bugherd.parentPage.$body,
-    targetOffset = $target.offset() || {top:0,left:0},
-    coordinates = {
-      pageOffsetLeft: parentPageOffset.left,
-      pageOffsetTop: parentPageOffset.top,
-      pageWidth: $parentDocument.width(),
-      pageHeight: $parentDocument.height(),
-      bodyWidth: $parentBody.width(),
-      bodyHeight: $parentBody.height(),
-      windowWidth: $parentWindow.prop('innerWidth'),
-      windowHeight: $parentWindow.prop('innerHeight'),
-      scrollX: $parentWindow.prop('scrollX'),
-      scrollY: $parentWindow.prop('scrollY'),
-      flagX: null,
-      flagY: null,
-      flagRelativeX: $target.data('bugOffsetX') || 0,
-      flagRelativeY: $target.data('bugOffsetY') || 0,
-      targetX: targetOffset.left,
-      targetY: targetOffset.top,
-      targetWidth: $target.width(),
-      targetHeight: $target.height(),
-      screenshotWindowX: null,
-      screenshotWindowY: null,
-      screenshotWindowWidth: null,
-      screenshotWindowHeight: null,
-      screenshotWindowFlagX: null,
-      screenshotWindowFlagY: null,
-      screenshotTargetX: null,
-      screenshotTargetY: null,
-      screenshotTargetWidth: 319,
-      screenshotTargetHeight: 200,
-      screenshotTargetFlagX: null,
-      screenshotTargetFlagY: null
-    };
+                    if(!$(this).val().length) {
+                        if(selected_token) {
+                            delete_token($(selected_token));
+                            hidden_input.change();
+                        } else if(previous_token.length) {
+                            select_token($(previous_token.get(0)));
+                        }
 
-    // Flag
-    coordinates.flagX = coordinates.targetX + coordinates.flagRelativeX;
-    coordinates.flagY = coordinates.targetY + coordinates.flagRelativeY;
+                        return false;
+                    } else if($(this).val().length === 1) {
+                        hide_dropdown();
+                    } else {
+                        // set a timeout just long enough to let this function finish.
+                        setTimeout(function(){do_search();}, 5);
+                    }
+                    break;
 
-    // Screenshot Window
-    coordinates.screenshotWindowX = coordinates.scrollX;
-    coordinates.screenshotWindowY = coordinates.scrollY;
-    coordinates.screenshotWindowFlagX = coordinates.flagX - coordinates.screenshotWindowX;
-    coordinates.screenshotWindowFlagY = coordinates.flagY - coordinates.screenshotWindowY;
+                case KEY.TAB:
+                case KEY.ENTER:
+                case KEY.NUMPAD_ENTER:
+                case KEY.COMMA:
+                  if(selected_dropdown_item && $(selected_dropdown_item).data("tokeninput")) {
+                    add_token($(selected_dropdown_item).data("tokeninput"));
+                    hidden_input.change();
+                  } else {
+                    if ($(input).data("settings").allowFreeTagging) {
+                      if($(input).data("settings").allowTabOut && $(this).val() === "") {
+                        return true;
+                      } else {
+                        add_freetagging_tokens();
+                        hidden_input.change();
+                      }
+                    } else {
+                      $(this).val("");
+                      if($(input).data("settings").allowTabOut) {
+                        return true;
+                      }
+                    }
+                    event.stopPropagation();
+                    event.preventDefault();
+                  }
+                  return false;
 
-    // Make Screenshot Window size adjust to only the size we need to
-    coordinates.screenshotWindowWidth = coordinates.windowWidth; /*Math.max(
-      Math.min(coordinates.windowWidth,coordinates.bodyWidth),
-      coordinates.screenshotWindowFlagX
-      );*/
-    coordinates.screenshotWindowHeight = coordinates.windowHeight; /*Math.max(
-      Math.min(coordinates.windowHeight,coordinates.bodyHeight),
-      coordinates.screenshotWindowFlagY
-      );*/
+                case KEY.ESCAPE:
+                  hide_dropdown();
+                  return true;
 
-    // Screenshot Target
-    var screenshotTargetPosition = this.generatePosition(
-                                                         coordinates,
-                                                         coordinates.screenshotTargetWidth,
-                                                         coordinates.screenshotTargetHeight,
-                                                         0,
-                                                         'screenshot'
-                                                         );
-    coordinates.screenshotTargetX = screenshotTargetPosition.x;
-    coordinates.screenshotTargetY = screenshotTargetPosition.y;
-    coordinates.screenshotTargetFlagX = coordinates.flagX - coordinates.screenshotTargetX;
-    coordinates.screenshotTargetFlagY = coordinates.flagY - coordinates.screenshotTargetY;
-
-    // Return
-    return coordinates;
-  },
-
-
-  generatePosition: function(coordinates,width,height,padding,mode) {
-    // Prepare
-    var
-    parentWindow = bugherd.parentPage.window,
-    x = coordinates.flagX,
-    y = coordinates.flagY,
-    maxWidth, maxHeight;
-
-    // Mode
-    if ( mode === 'screenshot' ) {
-      // set maxes
-      maxWidth = coordinates.pageWidth;
-      maxHeight = coordinates.pageHeight;
-      // center
-      x -= width/2;
-      y -= height/2;
-    }
-    else {
-      // set maxes
-      maxWidth = coordinates.windowWidth;
-      maxHeight = coordinates.windowHeight;
-      // take scrolling into account
-      x -= parentWindow.scrollX;
-      y -= parentWindow.scrollY;
-      // center optional
-      if ( mode === 'center' ) {
-        x -= width/2;
-        y -= height/2;
-      }
-    }
-
-    // Adjust Left
-    if ( x+width+padding > maxWidth ) {
-      x = maxWidth-width-padding;
-    }
-    if ( x < padding ) {
-      x = padding;
-    }
-
-    // Adjust Top
-    if ( y+height+padding > maxHeight ) {
-      y = maxHeight-height-padding;
-    }
-    if ( y < padding ) {
-      y = padding;
-    }
-
-    // Return
-    return {
-      x: x,
-      y: y
-    };
-  },
-
-
-
-  finish: function(event) {
-
-    // Reset the task
-    this.resetTask();
-    // Hide
-    this.$(".confirmBlock.active").removeClass("active");
-    this.hide();
-
-    // Event
-    if (event && $(event.target).hasClass('cancelLink')) {
-      this.trigger('cancelTagging');
-    }
-    this.trigger('endTagging');
-
-    if ((bugherd.isExtension && bugherd.application.get('mode') == 'anonymous')) {
-
-      bugherd.emitEvent('removeBugherd',{});
-    }
-    // Chain
-    return this;
-  },
-
-  /**
-   * create new task and save to server, end bug tag mode
-   */
-   submit: function() {
-
-    // Prepare
-    var taskCreate,
-    task = this.getTask(),
-    self = this;
-
-    if(!bugherd.application.isAdminView() && !bugherd.application.get('screenshotDisabled')) {
-      this.token = bugherd.setupScreenshot();
-    }
-    // Setup Values
-    var $description = this.$('#bh-description').val(),
-    $reporter = this.$("#bh-reporter").val(),
-    $reportTo = this.$("#bh-report-to").val(),
-    $severity = this.$('#bh-severity').val(),
-    $assignee = this.$("#bh-assignee").val(),
-    $created = new XDate().toISOString(),
-    $tags = $("#bh-tags").val() ? $("#bh-tags").val().split(',') : null,
-    $status = 0;
-
-    // Store the email address of the reporter...
-    if ($reporter) localStorage.setItem('bh-reporter',$reporter);
-
-    // Update
-    task.set({
-      description: $description,
-      requester_email: $reporter,
-      report_to: $reportTo,
-      priority_id: $severity,
-      assigned_to_id: $assignee,
-      created_at: $created,
-      tag_names: $tags || [],
-      status_id: $status
-    });
-    window.onbeforeunload = function(e) {
-      var msg = "A task is still being created.";
-      // IE, gecko and webkit all do this different
-      (e || window.event).returnValue = msg;
-      return msg;
-    };
-    this.showLoading();
-    bugherd.application.tasksCollection.create(task, {
-      success:function(){
-        task.collection.trigger('reset');
-        if(!bugherd.application.isAdminView()){
-          self.showSuccess();
-        }
-        else {
-          self.finish();
-        }
-        window.onbeforeunload = null;
-      },
-      error:function(model, xhr, textStatus, errorThrown){
-        bugherd.application.setupRaven(function(raven) {
-          // I know it seems like a lot of the same error message
-          // but actually jquery is a bit funny...
-          raven.captureMessage('Create task error: ' + xhr.statusText + '\n' + JSON.stringify(textStatus) + '\n' + errorThrown + '\n' + xhr.status + '\n' + JSON.stringify(model.toJSON()) + '\n\n' + xhr.responseText);
+                default:
+                    if(String.fromCharCode(event.which)) {
+                        // set a timeout just long enough to let this function finish.
+                        setTimeout(function(){do_search();}, 5);
+                    }
+                    break;
+            }
         });
 
-        var errorMessage;
-        if ( _.isObject(xhr.responseText) && _.isString(xhr.responseText.error) ) {
-          errorMessage = xhr.responseText.error;
+    // Keep reference for placeholder
+    if (settings.placeholder)
+        input_box.attr("placeholder", settings.placeholder)
+
+    // Keep a reference to the original input box
+    var hidden_input = $(input)
+                           .hide()
+                           .val("")
+                           .focus(function () {
+                               focus_with_timeout(input_box);
+                           })
+                           .blur(function () {
+                               input_box.blur();
+                               //return the object to this can be referenced in the callback functions.
+                               return hidden_input;
+                           });
+
+    // Keep a reference to the selected token and dropdown item
+    var selected_token = null;
+    var selected_token_index = 0;
+    var selected_dropdown_item = null;
+
+    // The list to store the token items in
+    var token_list = $("<ul />")
+        .addClass($(input).data("settings").classes.tokenList)
+        .click(function (event) {
+            var li = $(event.target).closest("li");
+            if(li && li.get(0) && $.data(li.get(0), "tokeninput")) {
+                toggle_select_token(li);
+            } else {
+                // Deselect selected token
+                if(selected_token) {
+                    deselect_token($(selected_token), POSITION.END);
+                }
+
+                // Focus input box
+                focus_with_timeout(input_box);
+            }
+        })
+        .mouseover(function (event) {
+            var li = $(event.target).closest("li");
+            if(li && selected_token !== this) {
+                li.addClass($(input).data("settings").classes.highlightedToken);
+            }
+        })
+        .mouseout(function (event) {
+            var li = $(event.target).closest("li");
+            if(li && selected_token !== this) {
+                li.removeClass($(input).data("settings").classes.highlightedToken);
+            }
+        })
+        .insertBefore(hidden_input);
+
+    // The token holding the input box
+    var input_token = $("<li />")
+        .addClass($(input).data("settings").classes.inputToken)
+        .appendTo(token_list)
+        .append(input_box);
+
+    // The list to store the dropdown items in
+    var dropdown = $("<div>")
+        .addClass($(input).data("settings").classes.dropdown)
+        .appendTo("body")
+        .hide();
+
+    // Magic element to help us resize the text input
+    var input_resizer = $("<tester/>")
+        .insertAfter(input_box)
+        .css({
+            position: "absolute",
+            top: -9999,
+            left: -9999,
+            width: "auto",
+            fontSize: input_box.css("fontSize"),
+            fontFamily: input_box.css("fontFamily"),
+            fontWeight: input_box.css("fontWeight"),
+            letterSpacing: input_box.css("letterSpacing"),
+            whiteSpace: "nowrap"
+        });
+
+    // Pre-populate list if items exist
+    hidden_input.val("");
+    var li_data = $(input).data("settings").prePopulate || hidden_input.data("pre");
+    if($(input).data("settings").processPrePopulate && $.isFunction($(input).data("settings").onResult)) {
+        li_data = $(input).data("settings").onResult.call(hidden_input, li_data);
+    }
+    if(li_data && li_data.length) {
+        $.each(li_data, function (index, value) {
+            insert_token(value);
+            checkTokenLimit();
+            input_box.attr("placeholder", null)
+        });
+    }
+
+    // Check if widget should initialize as disabled
+    if ($(input).data("settings").disabled) {
+        toggleDisabled(true);
+    }
+
+    // Initialization is done
+    if($.isFunction($(input).data("settings").onReady)) {
+        $(input).data("settings").onReady.call();
+    }
+
+    //
+    // Public functions
+    //
+
+    this.clear = function() {
+        token_list.children("li").each(function() {
+            if ($(this).children("input").length === 0) {
+                delete_token($(this));
+            }
+        });
+    };
+
+    this.add = function(item) {
+        add_token(item);
+    };
+
+    this.remove = function(item) {
+        token_list.children("li").each(function() {
+            if ($(this).children("input").length === 0) {
+                var currToken = $(this).data("tokeninput");
+                var match = true;
+                for (var prop in item) {
+                    if (item[prop] !== currToken[prop]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    delete_token($(this));
+                }
+            }
+        });
+    };
+
+    this.getTokens = function() {
+        return saved_tokens;
+    };
+
+    this.toggleDisabled = function(disable) {
+        toggleDisabled(disable);
+    };
+
+    // Resize input to maximum width so the placeholder can be seen
+    resize_input();
+
+    //
+    // Private functions
+    //
+
+    function escapeHTML(text) {
+      return $(input).data("settings").enableHTML ? text : _escapeHTML(text);
+    }
+
+    // Toggles the widget between enabled and disabled state, or according
+    // to the [disable] parameter.
+    function toggleDisabled(disable) {
+        if (typeof disable === 'boolean') {
+            $(input).data("settings").disabled = disable
         } else {
-          // we need to handle empty reponse text for when the network is offline or CORS issues
-          if (xhr.responseText !== "") {
-            errorMessage = JSON.parse(xhr.responseText).error;
-          } else {
-            errorMessage = "Could not connect to our servers, please check your network configuration";
+            $(input).data("settings").disabled = !$(input).data("settings").disabled;
+        }
+        input_box.attr('disabled', $(input).data("settings").disabled);
+        token_list.toggleClass($(input).data("settings").classes.disabled, $(input).data("settings").disabled);
+        // if there is any token selected we deselect it
+        if(selected_token) {
+            deselect_token($(selected_token), POSITION.END);
+        }
+        hidden_input.attr('disabled', $(input).data("settings").disabled);
+    }
+
+    function checkTokenLimit() {
+        if($(input).data("settings").tokenLimit !== null && token_count >= $(input).data("settings").tokenLimit) {
+            input_box.hide();
+            hide_dropdown();
+            return;
+        }
+    }
+
+    function resize_input() {
+        if(input_val === (input_val = input_box.val())) {return;}
+
+        // Get width left on the current line
+        var width_left = token_list.width() - input_box.offset().left - token_list.offset().left;
+        // Enter new content into resizer and resize input accordingly
+        input_resizer.html(_escapeHTML(input_val));
+        // Get maximum width, minimum the size of input and maximum the widget's width
+        input_box.width(Math.min(token_list.width(),
+                                 Math.max(width_left, input_resizer.width() + 30)));
+    }
+
+    function is_printable_character(keycode) {
+        return ((keycode >= 48 && keycode <= 90) ||     // 0-1a-z
+                (keycode >= 96 && keycode <= 111) ||    // numpad 0-9 + - / * .
+                (keycode >= 186 && keycode <= 192) ||   // ; = , - . / ^
+                (keycode >= 219 && keycode <= 222));    // ( \ ) '
+    }
+
+    function add_freetagging_tokens() {
+        var value = $.trim(input_box.val());
+        var tokens = value.split($(input).data("settings").tokenDelimiter);
+        $.each(tokens, function(i, token) {
+          if (!token) {
+            return;
           }
+
+          if ($.isFunction($(input).data("settings").onFreeTaggingAdd)) {
+            token = $(input).data("settings").onFreeTaggingAdd.call(hidden_input, token);
+          }
+          var object = {};
+          object[$(input).data("settings").tokenValue] = object[$(input).data("settings").propertyToSearch] = token;
+          add_token(object);
+        });
+    }
+
+    // Inner function to a token to the list
+    function insert_token(item) {
+        var $this_token = $($(input).data("settings").tokenFormatter(item));
+        var readonly = item.readonly === true ? true : false;
+
+        if(readonly) $this_token.addClass($(input).data("settings").classes.tokenReadOnly);
+
+        $this_token.addClass($(input).data("settings").classes.token).insertBefore(input_token);
+
+        // The 'delete token' button
+        if(!readonly) {
+          $("<span>" + $(input).data("settings").deleteText + "</span>")
+              .addClass($(input).data("settings").classes.tokenDelete)
+              .appendTo($this_token)
+              .click(function () {
+                  if (!$(input).data("settings").disabled) {
+                      delete_token($(this).parent());
+                      hidden_input.change();
+                      return false;
+                  }
+              });
         }
-        self.showError(errorMessage);
-        window.onbeforeunload = null;
-      }
-    });
 
-    // Chain
-    return this;
-  },
+        // Store data on the token
+        var token_data = item;
+        $.data($this_token.get(0), "tokeninput", item);
 
-  // Loading Pane
-  showLoading: function(e) {
-    this.$(".entry-content, .entry-actions, .confirm-message").hide();
-    this.$(".confirm-loading").show();
+        // Save this token for duplicate checking
+        saved_tokens = saved_tokens.slice(0,selected_token_index).concat([token_data]).concat(saved_tokens.slice(selected_token_index));
+        selected_token_index++;
 
-    // Chain
-    return this;
-  },
+        // Update the hidden input
+        update_hidden_input(saved_tokens, hidden_input);
 
-  // Error Pane
-  showError: function(errorMessage) {
-    this.$(".bh-entry").removeClass("entry-success").addClass("entry-error");
-    this.$(".entry-content, .entry-actions, .confirm-message").hide();
-    this.$(".confirm-error").show();
-    if (errorMessage) {
-      this.$(".confirm-error")
-        .find('p')
-        .text(errorMessage);
-    }
-    // Chain
-    return this;
-  },
+        token_count += 1;
 
-  // Success Pane
-
-  showSuccess: function(e) {
-    var task = this.getTask();
-
-    if(!bugherd.application.get('screenshotDisabled')) {
-      bugherd.requestScreenshot({
-        taskID: task.id,
-        token: this.token,
-        taskCoordinates: task.getCoordinates(),
-        checkRelevanceCallback: function(details){
-          // check if we are still the same task, and that we are still on the success pane
-          return task.id === details.request.taskID && this.$(".confirmBlock .success").is(':visible') === true;
+        // Check the token limit
+        if($(input).data("settings").tokenLimit !== null && token_count >= $(input).data("settings").tokenLimit) {
+            input_box.hide();
+            hide_dropdown();
         }
-      });
+
+        return $this_token;
     }
 
-    if (bugherd.application.get('mode') == 'anonymous') {
+    // Add a token to the token list based on user input
+    function add_token (item) {
+        var callback = $(input).data("settings").onAdd;
 
-      this.$(".bh-entry").removeClass("entry-error").addClass("entry-success");
-      this.$(".entry-content, .entry-actions, .confirm-message").hide();
+        // See if the token already exists and select it if we don't want duplicates
+        if(token_count > 0 && $(input).data("settings").preventDuplicates) {
+            var found_existing_token = null;
+            token_list.children().each(function () {
+                var existing_token = $(this);
+                var existing_data = $.data(existing_token.get(0), "tokeninput");
+                if(existing_data && existing_data[settings.tokenValue] === item[settings.tokenValue]) {
+                    found_existing_token = existing_token;
+                    return false;
+                }
+            });
 
-      if(bugherd.isExtension){
-        var url = this.getTask().get('secret_link');
-        this.$(".confirm-success")
-        .addClass('confirm-extension')
-        .find('p')
-        .find('a')
-        .empty()
-        .end()
-        .append('<a href="' + url + '" target=_blank>' + url + '</a>');
-      }
-      this.$(".confirm-success").show();
+            if(found_existing_token) {
+                select_token(found_existing_token);
+                input_token.insertAfter(found_existing_token);
+                focus_with_timeout(input_box);
+                return;
+            }
+        }
+
+        // Squeeze input_box so we force no unnecessary line break
+        input_box.width(0);
+
+        // Insert the new tokens
+        if($(input).data("settings").tokenLimit == null || token_count < $(input).data("settings").tokenLimit) {
+            insert_token(item);
+            // Remove the placeholder so it's not seen after you've added a token
+            input_box.attr("placeholder", null)
+            checkTokenLimit();
+        }
+
+        // Clear input box
+        input_box.val("");
+
+        // Don't show the help dropdown, they've got the idea
+        hide_dropdown();
+
+        // Execute the onAdd callback if defined
+        if($.isFunction(callback)) {
+            callback.call(hidden_input,item);
+        }
     }
-    else
-    {
-      this.finish();
+
+    // Select a token in the token list
+    function select_token (token) {
+        if (!$(input).data("settings").disabled) {
+            token.addClass($(input).data("settings").classes.selectedToken);
+            selected_token = token.get(0);
+
+            // Hide input box
+            input_box.val("");
+
+            // Hide dropdown if it is visible (eg if we clicked to select token)
+            hide_dropdown();
+        }
     }
 
-    // Chain
-    return this;
-  }
+    // Deselect a token in the token list
+    function deselect_token (token, position) {
+        token.removeClass($(input).data("settings").classes.selectedToken);
+        selected_token = null;
 
-}));
+        if(position === POSITION.BEFORE) {
+            input_token.insertBefore(token);
+            selected_token_index--;
+        } else if(position === POSITION.AFTER) {
+            input_token.insertAfter(token);
+            selected_token_index++;
+        } else {
+            input_token.appendTo(token_list);
+            selected_token_index = token_count;
+        }
+
+        // Show the input box and give it focus again
+        focus_with_timeout(input_box);
+    }
+
+    // Toggle selection of a token in the token list
+    function toggle_select_token(token) {
+        var previous_selected_token = selected_token;
+
+        if(selected_token) {
+            deselect_token($(selected_token), POSITION.END);
+        }
+
+        if(previous_selected_token === token.get(0)) {
+            deselect_token(token, POSITION.END);
+        } else {
+            select_token(token);
+        }
+    }
+
+    // Delete a token from the token list
+    function delete_token (token) {
+        // Remove the id from the saved list
+        var token_data = $.data(token.get(0), "tokeninput");
+        var callback = $(input).data("settings").onDelete;
+
+        var index = token.prevAll().length;
+        if(index > selected_token_index) index--;
+
+        // Delete the token
+        token.remove();
+        selected_token = null;
+
+        // Show the input box and give it focus again
+        focus_with_timeout(input_box);
+
+        // Remove this token from the saved list
+        saved_tokens = saved_tokens.slice(0,index).concat(saved_tokens.slice(index+1));
+        if (saved_tokens.length == 0) {
+            input_box.attr("placeholder", settings.placeholder)
+        }
+        if(index < selected_token_index) selected_token_index--;
+
+        // Update the hidden input
+        update_hidden_input(saved_tokens, hidden_input);
+
+        token_count -= 1;
+
+        if($(input).data("settings").tokenLimit !== null) {
+            input_box
+                .show()
+                .val("");
+            focus_with_timeout(input_box);
+        }
+
+        // Execute the onDelete callback if defined
+        if($.isFunction(callback)) {
+            callback.call(hidden_input,token_data);
+        }
+    }
+
+    // Update the hidden input box value
+    function update_hidden_input(saved_tokens, hidden_input) {
+        var token_values = $.map(saved_tokens, function (el) {
+            if(typeof $(input).data("settings").tokenValue == 'function')
+              return $(input).data("settings").tokenValue.call(this, el);
+
+            return el[$(input).data("settings").tokenValue];
+        });
+        hidden_input.val(token_values.join($(input).data("settings").tokenDelimiter));
+
+    }
+
+    // Hide and clear the results dropdown
+    function hide_dropdown () {
+        dropdown.hide().empty();
+        selected_dropdown_item = null;
+    }
+
+    function show_dropdown() {
+        dropdown
+            .css({
+                position: "absolute",
+                top: token_list.offset().top + token_list[0].getBoundingClientRect().height,
+                left: token_list.offset().left,
+                width: token_list.width(),
+                'z-index': $(input).data("settings").zindex
+            })
+            .show();
+    }
+
+    function show_dropdown_searching () {
+        if($(input).data("settings").searchingText) {
+            dropdown.html("<p>" + escapeHTML($(input).data("settings").searchingText) + "</p>");
+            show_dropdown();
+        }
+    }
+
+    function show_dropdown_hint () {
+        if($(input).data("settings").hintText) {
+            dropdown.html("<p>" + escapeHTML($(input).data("settings").hintText) + "</p>");
+            show_dropdown();
+        }
+    }
+
+    var regexp_special_chars = new RegExp('[.\\\\+*?\\[\\^\\]$(){}=!<>|:\\-]', 'g');
+    function regexp_escape(term) {
+        return term.replace(regexp_special_chars, '\\$&');
+    }
+
+    // Highlight the query part of the search term
+    function highlight_term(value, term) {
+        return value.replace(
+          new RegExp(
+            "(?![^&;]+;)(?!<[^<>]*)(" + regexp_escape(term) + ")(?![^<>]*>)(?![^&;]+;)",
+            "gi"
+          ), function(match, p1) {
+            return "<b>" + escapeHTML(p1) + "</b>";
+          }
+        );
+    }
+
+    function find_value_and_highlight_term(template, value, term) {
+        return template.replace(new RegExp("(?![^&;]+;)(?!<[^<>]*)(" + regexp_escape(value) + ")(?![^<>]*>)(?![^&;]+;)", "g"), highlight_term(value, term));
+    }
+
+    // Populate the results dropdown with some results
+    function populate_dropdown (query, results) {
+        if(results && results.length) {
+            dropdown.empty();
+            var dropdown_ul = $("<ul>")
+                .appendTo(dropdown)
+                .mouseover(function (event) {
+                    select_dropdown_item($(event.target).closest("li"));
+                })
+                .mousedown(function (event) {
+                    add_token($(event.target).closest("li").data("tokeninput"));
+                    hidden_input.change();
+                    return false;
+                })
+                .hide();
+
+            if ($(input).data("settings").resultsLimit && results.length > $(input).data("settings").resultsLimit) {
+                results = results.slice(0, $(input).data("settings").resultsLimit);
+            }
+
+            $.each(results, function(index, value) {
+                var this_li = $(input).data("settings").resultsFormatter(value);
+
+                this_li = find_value_and_highlight_term(this_li ,value[$(input).data("settings").propertyToSearch], query);
+
+                this_li = $(this_li).appendTo(dropdown_ul);
+
+                if(index % 2) {
+                    this_li.addClass($(input).data("settings").classes.dropdownItem);
+                } else {
+                    this_li.addClass($(input).data("settings").classes.dropdownItem2);
+                }
+
+                if(index === 0) {
+                    select_dropdown_item(this_li);
+                }
+
+                $.data(this_li.get(0), "tokeninput", value);
+            });
+
+            show_dropdown();
+
+            if($(input).data("settings").animateDropdown) {
+                dropdown_ul.slideDown("fast");
+            } else {
+                dropdown_ul.show();
+            }
+        } else {
+            if($(input).data("settings").noResultsText) {
+                dropdown.html("<p>" + escapeHTML($(input).data("settings").noResultsText) + "</p>");
+                show_dropdown();
+            }
+        }
+    }
+
+    // Highlight an item in the results dropdown
+    function select_dropdown_item (item) {
+        if(item) {
+            if(selected_dropdown_item) {
+                deselect_dropdown_item($(selected_dropdown_item));
+            }
+
+            item.addClass($(input).data("settings").classes.selectedDropdownItem);
+            selected_dropdown_item = item.get(0);
+        }
+    }
+
+    // Remove highlighting from an item in the results dropdown
+    function deselect_dropdown_item (item) {
+        item.removeClass($(input).data("settings").classes.selectedDropdownItem);
+        selected_dropdown_item = null;
+    }
+
+    // Do a search and show the "searching" dropdown if the input is longer
+    // than $(input).data("settings").minChars
+    function do_search() {
+        var query = input_box.val();
+
+        if(query && query.length) {
+            if(selected_token) {
+                deselect_token($(selected_token), POSITION.AFTER);
+            }
+
+            if(query.length >= $(input).data("settings").minChars) {
+                show_dropdown_searching();
+                clearTimeout(timeout);
+
+                timeout = setTimeout(function(){
+                    run_search(query);
+                }, $(input).data("settings").searchDelay);
+            } else {
+                hide_dropdown();
+            }
+        }
+    }
+
+    // Do the actual search
+    function run_search(query) {
+        var cache_key = query + computeURL();
+        var cached_results = cache.get(cache_key);
+        if(cached_results) {
+            if ($.isFunction($(input).data("settings").onCachedResult)) {
+              cached_results = $(input).data("settings").onCachedResult.call(hidden_input, cached_results);
+            }
+            populate_dropdown(query, cached_results);
+        } else {
+            // Are we doing an ajax search or local data search?
+            if($(input).data("settings").url) {
+                var url = computeURL();
+                // Extract exisiting get params
+                var ajax_params = {};
+                ajax_params.data = {};
+                if(url.indexOf("?") > -1) {
+                    var parts = url.split("?");
+                    ajax_params.url = parts[0];
+
+                    var param_array = parts[1].split("&");
+                    $.each(param_array, function (index, value) {
+                        var kv = value.split("=");
+                        ajax_params.data[kv[0]] = kv[1];
+                    });
+                } else {
+                    ajax_params.url = url;
+                }
+
+                // Prepare the request
+                ajax_params.data[$(input).data("settings").queryParam] = query;
+                ajax_params.type = $(input).data("settings").method;
+                ajax_params.dataType = $(input).data("settings").contentType;
+                if($(input).data("settings").crossDomain) {
+                    ajax_params.dataType = "jsonp";
+                }
+
+                // Attach the success callback
+                ajax_params.success = function(results) {
+                  cache.add(cache_key, $(input).data("settings").jsonContainer ? results[$(input).data("settings").jsonContainer] : results);
+                  if($.isFunction($(input).data("settings").onResult)) {
+                      results = $(input).data("settings").onResult.call(hidden_input, results);
+                  }
+
+                  // only populate the dropdown if the results are associated with the active search query
+                  if(input_box.val() === query) {
+                      populate_dropdown(query, $(input).data("settings").jsonContainer ? results[$(input).data("settings").jsonContainer] : results);
+                  }
+                };
+
+                // Make the request
+                $.ajax(ajax_params);
+            } else if($(input).data("settings").local_data) {
+                // Do the search through local data
+                var results = $.grep($(input).data("settings").local_data, function (row) {
+                    return row[$(input).data("settings").propertyToSearch].toLowerCase().indexOf(query.toLowerCase()) > -1;
+                });
+
+                results.sort(function(a, b) {
+                  return a["name"] > b["name"];
+                });
+
+                if (results.count === 0 || results[0]["name"].toLowerCase() != query.toLowerCase()) {
+                  results.splice(0, 0, {"id": 0, "name": query});
+                }
+                
+                cache.add(cache_key, results);
+                if($.isFunction($(input).data("settings").onResult)) {
+                    results = $(input).data("settings").onResult.call(hidden_input, results);
+                }
+                populate_dropdown(query, results);
+            }
+        }
+    }
+
+    // compute the dynamic URL
+    function computeURL() {
+        var url = $(input).data("settings").url;
+        if(typeof $(input).data("settings").url == 'function') {
+            url = $(input).data("settings").url.call($(input).data("settings"));
+        }
+        return url;
+    }
+
+    // Bring browser focus to the specified object.
+    // Use of setTimeout is to get around an IE bug.
+    // (See, e.g., http://stackoverflow.com/questions/2600186/focus-doesnt-work-in-ie)
+    //
+    // obj: a jQuery object to focus()
+    function focus_with_timeout(obj) {
+        setTimeout(function() { obj.focus(); }, 50);
+    }
+
+};
+
+// Really basic cache for the results
+$.TokenList.Cache = function (options) {
+    var settings = $.extend({
+        max_size: 500
+    }, options);
+
+    var data = {};
+    var size = 0;
+
+    var flush = function () {
+        data = {};
+        size = 0;
+    };
+
+    this.add = function (query, results) {
+        if(size > settings.max_size) {
+            flush();
+        }
+
+        if(!data[query]) {
+            size += 1;
+        }
+
+        data[query] = results;
+    };
+
+    this.get = function (query) {
+        return data[query];
+    };
+};
+}(jQuery));
+

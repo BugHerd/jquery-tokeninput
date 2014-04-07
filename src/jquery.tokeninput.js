@@ -73,8 +73,7 @@ var DEFAULT_SETTINGS = {
 
     // BugHerd specific settings for the tag selector
     alphaSort: false,
-    createNew: false,
-    createNewSuffix: "",
+    createNew: false
 };
 
 // Default classes to use when theming
@@ -1010,7 +1009,7 @@ $.TokenList = function (input, url_or_data, settings) {
 
                 if ($(input).data("settings").createNew) {
                   if (results.length === 0 || results[0][searchField].toLowerCase() != query.toLowerCase()) {
-                    results.splice(0, 0, {"id": 0, "name": query + $(input).data("settings").createNewSuffix});
+                    results.splice(0, 0, {"id": 0, "name": query);
                   }
                 }
                 
